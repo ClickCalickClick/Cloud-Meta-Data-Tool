@@ -34,6 +34,29 @@
         .hidden {
             display: none;
         }
+        /* Hide default file inputs */
+        input[type="file"] {
+            display: none;
+        }
+        /* Custom file input buttons */
+        .custom-file-button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        .custom-file-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .custom-file-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         /* Style for progress bar */
         progress::-webkit-progress-bar {
             background-color: #e0e0e0;
@@ -61,14 +84,25 @@
             </button>
         </div>
         
-        <p class="text-gray-600 mb-6">Select a folder of JPEG images. This tool will use AI to generate a description for each one, write it to the metadata, and package all the new files into a single `.zip` download.</p>
+        <p class="text-gray-600 mb-6">Select one or more JPEG images, or select a folder of images. This tool will use AI to generate a description for each one, write it to the metadata, and package all the new files into a single `.zip` download.</p>
         
         <!-- Step 1: Upload -->
         <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2" for="imageUploader">
-                Step 1: Select a Folder
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+                Step 1: Select Images
             </label>
-            <input id="imageUploader" type="file" accept="image/jpeg" webkitdirectory directory multiple class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+            <div class="flex gap-2">
+                <label for="singleImageUploader" class="custom-file-button flex-1 bg-blue-50 text-blue-700 hover:bg-blue-100">
+                    Choose Images
+                </label>
+                <input id="singleImageUploader" type="file" accept="image/jpeg" multiple>
+                
+                <label for="folderUploader" class="custom-file-button flex-1 bg-green-50 text-green-700 hover:bg-green-100">
+                    Choose Folder
+                </label>
+                <input id="folderUploader" type="file" accept="image/jpeg" webkitdirectory directory multiple>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">Left: Choose Images | Right: Choose Folder</p>
         </div>
         
         <!-- Step 2: Generate -->
@@ -91,12 +125,29 @@
                 <progress id="progressBar" class="w-full h-3 rounded-lg" value="0" max="100"></progress>
                 <p id="progressText" class="text-sm text-gray-600 text-center mt-2"></p>
             </div>
+            
+            <!-- Optional Review Metadata Section -->
+            <div id="reviewSection" class="mb-4 hidden">
+                <button id="toggleReviewButton" class="w-full bg-gray-100 text-gray-700 font-medium py-2 px-4 rounded-lg hover:bg-gray-200 transition duration-300 flex items-center justify-between">
+                    <span>📝 Review & Edit Metadata (Optional)</span>
+                    <svg id="reviewArrow" class="w-5 h-5 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+                
+                <div id="reviewPanel" class="hidden mt-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <div id="reviewContent" class="space-y-4">
+                        <!-- Dynamic content will be inserted here for each file -->
+                    </div>
+                </div>
+            </div>
+            
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
                     Step 3: Download
                 </label>
                 <button id="downloadZipButton" class="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 transition duration-300 hidden">
-                    Download Tagged Images (.zip)
+                    Download Tagged Images
                 </button>
             </div>
         </div>
@@ -132,7 +183,8 @@
         const saveApiKeyButton = document.getElementById('saveApiKeyButton');
         const apiKeyInput = document.getElementById('apiKeyInput');
         
-        const imageUploader = document.getElementById('imageUploader');
+        const singleImageUploader = document.getElementById('singleImageUploader');
+        const folderUploader = document.getElementById('folderUploader');
         const generateButton = document.getElementById('generateButton');
         const generateButtonText = document.getElementById('generateButtonText');
         const loader = document.getElementById('loader');
@@ -142,10 +194,17 @@
         const progressText = document.getElementById('progressText');
         const downloadZipButton = document.getElementById('downloadZipButton');
         
+        const reviewSection = document.getElementById('reviewSection');
+        const toggleReviewButton = document.getElementById('toggleReviewButton');
+        const reviewPanel = document.getElementById('reviewPanel');
+        const reviewContent = document.getElementById('reviewContent');
+        const reviewArrow = document.getElementById('reviewArrow');
+        
         const errorMessage = document.getElementById('errorMessage');
 
         // --- Global State ---
         let pendingFiles = [];
+        let processedFiles = []; // Store processed file data
         let zip = new JSZip();
         const API_KEY_NAME = 'googleApiKey';
 
@@ -167,12 +226,14 @@
                 generateButtonText.textContent = 'Processing...';
                 loader.classList.remove('hidden');
                 generateButton.disabled = true;
-                imageUploader.disabled = true;
+                singleImageUploader.disabled = true;
+                folderUploader.disabled = true;
             } else {
                 generateButtonText.textContent = 'Start Processing';
                 loader.classList.add('hidden');
                 generateButton.disabled = false;
-                imageUploader.disabled = false;
+                singleImageUploader.disabled = false;
+                folderUploader.disabled = false;
             }
         }
 
@@ -207,13 +268,16 @@
         }
 
         // --- Image Handling Logic ---
-        imageUploader.addEventListener('change', (event) => {
+        function handleImageSelection(files) {
             hideMessage();
             progressContainer.classList.add('hidden');
             downloadZipButton.classList.add('hidden');
+            reviewSection.classList.add('hidden');
+            reviewPanel.classList.add('hidden');
+            reviewArrow.style.transform = 'rotate(0deg)';
             zip = new JSZip(); // Reset the zip object
+            processedFiles = []; // Reset processed files
 
-            const files = event.target.files;
             if (!files || files.length === 0) {
                 return;
             }
@@ -222,7 +286,7 @@
             pendingFiles = Array.from(files).filter(file => file.type === 'image/jpeg');
 
             if (pendingFiles.length === 0) {
-                showMessage('No JPEG files found in the selected folder.');
+                showMessage('No JPEG files found in the selection.');
                 generateButton.disabled = true;
                 return;
             }
@@ -230,6 +294,106 @@
             progressContainer.classList.remove('hidden');
             progressText.textContent = `Selected ${pendingFiles.length} JPEG file(s). Ready to process.`;
             generateButton.disabled = false;
+        }
+        
+        // Helper function to modify filename
+        function getModifiedFilename(originalFilename) {
+            const lastDot = originalFilename.lastIndexOf('.');
+            if (lastDot === -1) {
+                return originalFilename + '-ai-meta-data';
+            }
+            const name = originalFilename.substring(0, lastDot);
+            const ext = originalFilename.substring(lastDot);
+            return name + '-ai-meta-data' + ext;
+        }
+
+        // --- Review UI Toggle ---
+        toggleReviewButton.addEventListener('click', () => {
+            const isHidden = reviewPanel.classList.contains('hidden');
+            if (isHidden) {
+                reviewPanel.classList.remove('hidden');
+                reviewArrow.style.transform = 'rotate(180deg)';
+            } else {
+                reviewPanel.classList.add('hidden');
+                reviewArrow.style.transform = 'rotate(0deg)';
+            }
+        });
+
+        /**
+         * Populates the review UI with editable metadata for all processed files
+         */
+        function populateReviewUI() {
+            reviewContent.innerHTML = '';
+            
+            processedFiles.forEach((file, index) => {
+                const fileSection = document.createElement('div');
+                fileSection.className = 'border border-gray-300 rounded-lg p-3 bg-white';
+                fileSection.innerHTML = `
+                    <h4 class="font-semibold text-gray-800 mb-2 text-sm">${file.filename}</h4>
+                    
+                    <div class="mb-3">
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Caption (editable):</label>
+                        <textarea 
+                            id="caption-${index}" 
+                            class="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                            rows="2"
+                        >${file.caption}</textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Keywords (editable, comma-separated):</label>
+                        <textarea 
+                            id="keywords-${index}" 
+                            class="w-full p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                            rows="2"
+                        >${file.keywords.join(', ')}</textarea>
+                    </div>
+                    
+                    <div class="mb-2">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Objects Detected:</label>
+                        <p class="text-xs text-gray-500 italic">${file.objects.length > 0 ? file.objects.join(', ') : 'None detected'}</p>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Text Detected (OCR):</label>
+                        <p class="text-xs text-gray-500 italic">${file.ocrText}</p>
+                    </div>
+                `;
+                reviewContent.appendChild(fileSection);
+            });
+            
+            reviewSection.classList.remove('hidden');
+        }
+
+        /**
+         * Gets the current (possibly edited) metadata from the review UI
+         */
+        function getEditedMetadata(index) {
+            const captionEl = document.getElementById(`caption-${index}`);
+            const keywordsEl = document.getElementById(`keywords-${index}`);
+            
+            if (captionEl && keywordsEl) {
+                return {
+                    caption: captionEl.value,
+                    keywords: keywordsEl.value
+                };
+            }
+            
+            // Fallback to original if UI not populated
+            return {
+                caption: processedFiles[index].caption,
+                keywords: processedFiles[index].keywords.join(', ')
+            };
+        }
+
+        singleImageUploader.addEventListener('change', (event) => {
+            folderUploader.value = ''; // Clear folder uploader
+            handleImageSelection(event.target.files);
+        });
+
+        folderUploader.addEventListener('change', (event) => {
+            singleImageUploader.value = ''; // Clear single image uploader
+            handleImageSelection(event.target.files);
         });
 
         // --- Main Processing Logic ---
@@ -263,14 +427,25 @@
                     const base64String = await readFileAsBase64(file);
                     
                     // 2. Call Google Vision API
-                    const description = await callVisionApi(base64String, apiKey);
+                    const visionResponse = await callVisionApi(base64String, apiKey);
                     
-                    // 3. Inject Metadata
-                    const newBase64 = injectMetadata(base64String, description);
+                    // 3. Process Vision API response to get structured metadata
+                    const metadata = processVisionResponse(visionResponse);
+                    
+                    // 4. Get modified filename
+                    const modifiedFilename = getModifiedFilename(file.name);
 
-                    // 4. Add to ZIP file (must strip prefix for jszip)
-                    const newImageData = newBase64.split(',')[1];
-                    zip.file(file.name, newImageData, { base64: true });
+                    // Store processed file info with separate metadata fields
+                    const newImageData = base64String.split(',')[1];
+                    processedFiles.push({
+                        filename: modifiedFilename,
+                        data: newImageData,
+                        base64: base64String,
+                        caption: metadata.caption,
+                        keywords: metadata.keywords,
+                        objects: metadata.objects,
+                        ocrText: metadata.ocrText
+                    });
 
                 } catch (error) {
                     console.error(`Failed to process ${file.name}:`, error);
@@ -281,7 +456,17 @@
             
             // All files processed
             setLoading(false);
-            progressText.textContent = `Processing Complete! ${pendingFiles.length} files tagged.`;
+            progressText.textContent = `Processing Complete! ${processedFiles.length} files tagged.`;
+            
+            // Populate review UI
+            populateReviewUI();
+            
+            // Update button text based on number of files
+            if (processedFiles.length === 1) {
+                downloadZipButton.textContent = 'Download Tagged Image';
+            } else {
+                downloadZipButton.textContent = 'Download Tagged Images (.zip)';
+            }
             downloadZipButton.classList.remove('hidden');
         });
 
@@ -305,7 +490,7 @@
          * Calls the Google Vision API with a base64 image.
          * @param {string} base64WithPrefix - The full "data:image/jpeg;base64,..." string.
          * @param {string} apiKey - The user's Google API key.
-         * @returns {Promise<string>} - A promise that resolves with the generated description.
+         * @returns {Promise<Object>} - A promise that resolves with the full Vision API response data.
          */
         async function callVisionApi(base64WithPrefix, apiKey) {
             const base64Data = base64WithPrefix.split(',')[1];
@@ -315,7 +500,9 @@
                 requests: [{
                     image: { content: base64Data },
                     features: [
-                        { type: 'LABEL_DETECTION', maxResults: 15 },
+                        { type: 'LABEL_DETECTION', maxResults: 20 },
+                        { type: 'OBJECT_LOCALIZATION', maxResults: 15 },
+                        { type: 'TEXT_DETECTION', maxResults: 1 },
                         { type: 'WEB_DETECTION', maxResults: 1 }
                     ]
                 }]
@@ -339,26 +526,101 @@
                 throw new Error('Received an empty response from the API.');
             }
             
-            const res = data.responses[0];
-            let descriptionParts = [];
+            return data.responses[0];
+        }
 
-            if (res.webDetection && res.webDetection.webEntities && res.webDetection.webEntities.length > 0) {
-                const webDesc = res.webDetection.webEntities[0].description;
-                if (webDesc) {
-                    descriptionParts.push(`A photo of: ${webDesc}.`);
+        /**
+         * Processes Vision API response to extract and construct better metadata.
+         * @param {Object} visionResponse - The Vision API response object.
+         * @returns {Object} - Object containing { caption, keywords, objects, ocrText }
+         */
+        function processVisionResponse(visionResponse) {
+            const CONFIDENCE_THRESHOLD = 0.7;
+            
+            // Extract objects (most specific)
+            let objects = [];
+            if (visionResponse.localizedObjectAnnotations) {
+                objects = visionResponse.localizedObjectAnnotations
+                    .filter(obj => obj.score >= CONFIDENCE_THRESHOLD)
+                    .map(obj => ({
+                        name: obj.name,
+                        score: obj.score
+                    }))
+                    .sort((a, b) => b.score - a.score);
+            }
+            
+            // Extract OCR text
+            let ocrText = '';
+            if (visionResponse.textAnnotations && visionResponse.textAnnotations.length > 0) {
+                ocrText = visionResponse.textAnnotations[0].description || '';
+            }
+            
+            // Extract web entities
+            let webEntities = [];
+            if (visionResponse.webDetection && visionResponse.webDetection.webEntities) {
+                webEntities = visionResponse.webDetection.webEntities
+                    .filter(entity => entity.score >= CONFIDENCE_THRESHOLD && entity.description)
+                    .map(entity => entity.description)
+                    .slice(0, 3);
+            }
+            
+            // Extract labels
+            let labels = [];
+            if (visionResponse.labelAnnotations) {
+                labels = visionResponse.labelAnnotations
+                    .filter(label => label.score >= CONFIDENCE_THRESHOLD)
+                    .map(label => label.description);
+            }
+            
+            // Build caption (natural language sentence)
+            let captionParts = [];
+            
+            // Start with web entity if it provides context
+            if (webEntities.length > 0) {
+                captionParts.push(webEntities[0]);
+            }
+            
+            // Add specific objects
+            if (objects.length > 0) {
+                const objectNames = objects.slice(0, 3).map(o => o.name.toLowerCase());
+                if (captionParts.length > 0) {
+                    captionParts.push('with ' + objectNames.join(', '));
+                } else {
+                    captionParts.push('Image contains ' + objectNames.join(', '));
                 }
             }
-
-            if (res.labelAnnotations && res.labelAnnotations.length > 0) {
-                const labels = res.labelAnnotations.map(l => l.description).join(', ');
-                descriptionParts.push(`Tags: ${labels}`);
+            
+            // Add OCR if present and short
+            if (ocrText && ocrText.length > 0 && ocrText.length < 50) {
+                captionParts.push('Text visible: "' + ocrText.trim().replace(/\n/g, ' ') + '"');
             }
-
-            if (descriptionParts.length === 0) {
-                return 'No description or labels found.';
-            } else {
-                return descriptionParts.join('\n');
-            }
+            
+            const caption = captionParts.length > 0 
+                ? captionParts.join(' ')
+                : (labels.length > 0 ? 'Image showing ' + labels.slice(0, 3).join(', ') : 'Image content detected');
+            
+            // Build keywords list (deduplicated, ordered by specificity)
+            let allKeywords = [
+                ...objects.map(o => o.name),
+                ...webEntities,
+                ...labels
+            ];
+            
+            // Deduplicate (case-insensitive)
+            const seen = new Set();
+            const uniqueKeywords = allKeywords.filter(kw => {
+                const lower = kw.toLowerCase();
+                if (seen.has(lower)) return false;
+                seen.add(lower);
+                return true;
+            });
+            
+            return {
+                caption: caption,
+                keywords: uniqueKeywords,
+                objects: objects.map(o => `${o.name} (${Math.round(o.score * 100)}%)`),
+                ocrText: ocrText ? ocrText.trim() : 'No text detected'
+            };
         }
 
         /**
@@ -372,38 +634,115 @@
                 throw new Error('piexif.js library not loaded.');
             }
 
-            const iptcData = {};
-            // Write to the IPTC "Caption/Abstract" field (2:120)
-            iptcData[piexif.IPTC.Caption_Abstract] = description;
-
-            const exifObj = { "IPTC": iptcData };
-            const exifBytes = piexif.dump(exifObj);
-            
-            // Insert new metadata into the original image's base64 string
-            return piexif.insert(exifBytes, originalBase64);
+            try {
+                // Try to load existing EXIF data
+                let exifObj = piexif.load(originalBase64);
+                
+                // Add or update ImageDescription in 0th IFD
+                if (!exifObj["0th"]) {
+                    exifObj["0th"] = {};
+                }
+                exifObj["0th"][piexif.ImageIFD.ImageDescription] = description;
+                
+                // Add or update UserComment in Exif IFD
+                if (!exifObj["Exif"]) {
+                    exifObj["Exif"] = {};
+                }
+                exifObj["Exif"][piexif.ExifIFD.UserComment] = description;
+                
+                // Dump and insert
+                const exifBytes = piexif.dump(exifObj);
+                return piexif.insert(exifBytes, originalBase64);
+                
+            } catch (error) {
+                // If loading fails, create new EXIF data
+                console.warn('Could not load existing EXIF, creating new:', error);
+                const exifObj = {
+                    "0th": {
+                        [piexif.ImageIFD.ImageDescription]: description
+                    },
+                    "Exif": {
+                        [piexif.ExifIFD.UserComment]: description
+                    }
+                };
+                const exifBytes = piexif.dump(exifObj);
+                return piexif.insert(exifBytes, originalBase64);
+            }
         }
 
         // --- Download ZIP Logic ---
         downloadZipButton.addEventListener('click', async () => {
-            progressText.textContent = 'Generating .zip file... This may take a moment.';
-            
-            try {
-                const content = await zip.generateAsync({ type: "blob" });
+            // Single file: Direct download
+            if (processedFiles.length === 1) {
+                const file = processedFiles[0];
                 
-                // Create a download link and click it
+                // Get edited metadata
+                const metadata = getEditedMetadata(0);
+                const description = `${metadata.caption}\n\nKeywords: ${metadata.keywords}`;
+                
+                // Inject metadata into the image
+                const newBase64 = injectMetadata(file.base64, description);
+                const newImageData = newBase64.split(',')[1];
+                
+                // Convert base64 to blob
+                const byteCharacters = atob(newImageData);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'image/jpeg' });
+                
+                // Create download link
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(content);
-                a.download = 'tagged-images.zip';
+                a.href = URL.createObjectURL(blob);
+                a.download = file.filename;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
-                URL.revokeObjectURL(a.href); // Free up memory
+                URL.revokeObjectURL(a.href);
+                
+                progressText.textContent = 'Image downloaded successfully!';
+                
+            } else {
+                // Multiple files: ZIP download
+                progressText.textContent = 'Generating .zip file... This may take a moment.';
+                
+                try {
+                    // Create new zip with metadata-injected images
+                    const finalZip = new JSZip();
+                    
+                    for (let i = 0; i < processedFiles.length; i++) {
+                        const file = processedFiles[i];
+                        
+                        // Get edited metadata
+                        const metadata = getEditedMetadata(i);
+                        const description = `${metadata.caption}\n\nKeywords: ${metadata.keywords}`;
+                        
+                        // Inject metadata into the image
+                        const newBase64 = injectMetadata(file.base64, description);
+                        const newImageData = newBase64.split(',')[1];
+                        
+                        finalZip.file(file.filename, newImageData, { base64: true });
+                    }
+                    
+                    const content = await finalZip.generateAsync({ type: "blob" });
+                    
+                    // Create a download link and click it
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(content);
+                    a.download = 'tagged-images.zip';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(a.href);
 
-                progressText.textContent = '.zip file successfully created!';
+                    progressText.textContent = '.zip file successfully created!';
 
-            } catch (error) {
-                console.error('ZIP generation error:', error);
-                showMessage(`Error creating .zip file: ${error.message}`);
+                } catch (error) {
+                    console.error('ZIP generation error:', error);
+                    showMessage(`Error creating .zip file: ${error.message}`);
+                }
             }
         });
 
