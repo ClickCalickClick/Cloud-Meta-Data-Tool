@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Image Tagger (Batch Mode)</title>
+    <!-- 1. Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. piexif.js: To write metadata -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/piexifjs/1.0.6/piexif.min.js"></script>
+    <!-- 3. jszip.js: To create a zip file for download -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <style>
+        /* Simple Inter font */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple CSS loader for the API call */
+        .loader {
+            border: 4px solid #f3f3f3; /* Light grey */
+            border-top: 4px solid #3b82f6; /* Blue */
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Helper to hide elements */
+        .hidden {
+            display: none;
+        }
+        /* Style for progress bar */
+        progress::-webkit-progress-bar {
+            background-color: #e0e0e0;
+            border-radius: 8px;
+        }
+        progress::-webkit-progress-value {
+            background-color: #3b82f6;
+            border-radius: 8px;
+            transition: width 0.3s ease;
+        }
+        progress::-moz-progress-bar {
+            background-color: #3b82f6;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main Application Card -->
+    <div class="bg-white rounded-2xl shadow-xl p-8 max-w-2xl w-full">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">AI Image Tagger</h1>
+            <button id="settingsButton" class="text-gray-500 hover:text-blue-500">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-settings"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+        </div>
+        
+        <p class="text-gray-600 mb-6">Select a folder of JPEG images. This tool will use AI to generate a description for each one, write it to the metadata, and package all the new files into a single `.zip` download.</p>
+        
+        <!-- Step 1: Upload -->
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2" for="imageUploader">
+                Step 1: Select a Folder
+            </label>
+            <input id="imageUploader" type="file" accept="image/jpeg" webkitdirectory directory multiple class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+        </div>
+        
+        <!-- Step 2: Generate -->
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+                Step 2: Start Batch Processing
+            </label>
+            <button id="generateButton" disabled class="w-full bg-blue-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-600 transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center">
+                <span id="generateButtonText">Start Processing</span>
+                <div id="loader" class="loader hidden ml-3"></div>
+            </button>
+        </div>
+
+        <!-- Step 3: Progress & Download -->
+        <div id="progressContainer" class="hidden">
+            <div class="mb-4">
+                <label for="progressText" class="block text-sm font-medium text-gray-700 mb-2" id="progressLabel">
+                    Processing Files...
+                </label>
+                <progress id="progressBar" class="w-full h-3 rounded-lg" value="0" max="100"></progress>
+                <p id="progressText" class="text-sm text-gray-600 text-center mt-2"></p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Step 3: Download
+                </label>
+                <button id="downloadZipButton" class="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 transition duration-300 hidden">
+                    Download Tagged Images (.zip)
+                </button>
+            </div>
+        </div>
+        
+        <!-- Error Message -->
+        <div id="errorMessage" class="hidden text-red-600 font-medium text-center mt-4 p-3 bg-red-50 rounded-lg"></div>
+
+    </div>
+
+    <!-- Settings Modal (Hidden by default) -->
+    <div id="settingsModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Settings</h2>
+            <p class="text-gray-600 mb-4">Please enter your Google Cloud Vision API key. This key is saved *only* in your browser's local storage and is never sent to any server except Google's.</p>
+            <div class="mb-4">
+                <label for="apiKeyInput" class="block text-sm font-medium text-gray-700 mb-2">
+                    Google Cloud Vision API Key
+                </label>
+                <input type="password" id="apiKeyInput" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div class="flex justify-end space-x-3">
+                <button id="closeModalButton" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Close</button>
+                <button id="saveApiKeyButton" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">Save Key</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const settingsButton = document.getElementById('settingsButton');
+        const settingsModal = document.getElementById('settingsModal');
+        const closeModalButton = document.getElementById('closeModalButton');
+        const saveApiKeyButton = document.getElementById('saveApiKeyButton');
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        
+        const imageUploader = document.getElementById('imageUploader');
+        const generateButton = document.getElementById('generateButton');
+        const generateButtonText = document.getElementById('generateButtonText');
+        const loader = document.getElementById('loader');
+        
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const downloadZipButton = document.getElementById('downloadZipButton');
+        
+        const errorMessage = document.getElementById('errorMessage');
+
+        // --- Global State ---
+        let pendingFiles = [];
+        let zip = new JSZip();
+        const API_KEY_NAME = 'googleApiKey';
+
+        // --- Utility Functions ---
+        function showMessage(msg, isError = true) {
+            errorMessage.textContent = msg;
+            errorMessage.className = isError 
+                ? 'text-red-600 font-medium text-center mt-4 p-3 bg-red-50 rounded-lg' 
+                : 'text-green-600 font-medium text-center mt-4 p-3 bg-green-50 rounded-lg';
+            errorMessage.classList.remove('hidden');
+        }
+
+        function hideMessage() {
+            errorMessage.classList.add('hidden');
+        }
+
+        function setLoading(isLoading) {
+            if (isLoading) {
+                generateButtonText.textContent = 'Processing...';
+                loader.classList.remove('hidden');
+                generateButton.disabled = true;
+                imageUploader.disabled = true;
+            } else {
+                generateButtonText.textContent = 'Start Processing';
+                loader.classList.add('hidden');
+                generateButton.disabled = false;
+                imageUploader.disabled = false;
+            }
+        }
+
+        // --- Settings Modal Logic ---
+        settingsButton.addEventListener('click', () => {
+            settingsModal.classList.remove('hidden');
+        });
+
+        closeModalButton.addEventListener('click', () => {
+            settingsModal.classList.add('hidden');
+        });
+
+        saveApiKeyButton.addEventListener('click', () => {
+            const key = apiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem(API_KEY_NAME, key);
+                settingsModal.classList.add('hidden');
+                showMessage('API Key saved successfully.', false);
+                setTimeout(hideMessage, 3000);
+            } else {
+                showMessage('Please enter a valid API key.');
+            }
+        });
+
+        function loadApiKey() {
+            const key = localStorage.getItem(API_KEY_NAME);
+            if (key) {
+                apiKeyInput.value = key;
+            } else {
+                settingsModal.classList.remove('hidden'); // Show modal if no key
+            }
+        }
+
+        // --- Image Handling Logic ---
+        imageUploader.addEventListener('change', (event) => {
+            hideMessage();
+            progressContainer.classList.add('hidden');
+            downloadZipButton.classList.add('hidden');
+            zip = new JSZip(); // Reset the zip object
+
+            const files = event.target.files;
+            if (!files || files.length === 0) {
+                return;
+            }
+            
+            // Filter for JPEGs only
+            pendingFiles = Array.from(files).filter(file => file.type === 'image/jpeg');
+
+            if (pendingFiles.length === 0) {
+                showMessage('No JPEG files found in the selected folder.');
+                generateButton.disabled = true;
+                return;
+            }
+
+            progressContainer.classList.remove('hidden');
+            progressText.textContent = `Selected ${pendingFiles.length} JPEG file(s). Ready to process.`;
+            generateButton.disabled = false;
+        });
+
+        // --- Main Processing Logic ---
+        generateButton.addEventListener('click', async () => {
+            hideMessage();
+            const apiKey = localStorage.getItem(API_KEY_NAME);
+
+            if (!apiKey) {
+                showMessage('Please set your Google Vision API key in Settings.');
+                settingsModal.classList.remove('hidden');
+                return;
+            }
+
+            if (pendingFiles.length === 0) {
+                showMessage('Please select a folder containing JPEG images first.');
+                return;
+            }
+
+            setLoading(true);
+            downloadZipButton.classList.add('hidden');
+            progressBar.value = 0;
+            progressBar.max = pendingFiles.length;
+
+            for (let i = 0; i < pendingFiles.length; i++) {
+                const file = pendingFiles[i];
+                progressText.textContent = `Processing "${file.name}" (${i + 1} of ${pendingFiles.length})...`;
+                progressBar.value = i + 1;
+
+                try {
+                    // 1. Read file as Base64
+                    const base64String = await readFileAsBase64(file);
+                    
+                    // 2. Call Google Vision API
+                    const description = await callVisionApi(base64String, apiKey);
+                    
+                    // 3. Inject Metadata
+                    const newBase64 = injectMetadata(base64String, description);
+
+                    // 4. Add to ZIP file (must strip prefix for jszip)
+                    const newImageData = newBase64.split(',')[1];
+                    zip.file(file.name, newImageData, { base64: true });
+
+                } catch (error) {
+                    console.error(`Failed to process ${file.name}:`, error);
+                    // Show error but continue to the next file
+                    showMessage(`Skipped ${file.name}: ${error.message}`);
+                }
+            }
+            
+            // All files processed
+            setLoading(false);
+            progressText.textContent = `Processing Complete! ${pendingFiles.length} files tagged.`;
+            downloadZipButton.classList.remove('hidden');
+        });
+
+        // --- Helper Functions ---
+
+        /**
+         * Reads a File object and returns a Base64 encoded string.
+         * @param {File} file - The file to read.
+         * @returns {Promise<string>} - A promise that resolves with the base64 string.
+         */
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = (e) => reject(new Error('File reading error: ' + e.target.error));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        /**
+         * Calls the Google Vision API with a base64 image.
+         * @param {string} base64WithPrefix - The full "data:image/jpeg;base64,..." string.
+         * @param {string} apiKey - The user's Google API key.
+         * @returns {Promise<string>} - A promise that resolves with the generated description.
+         */
+        async function callVisionApi(base64WithPrefix, apiKey) {
+            const base64Data = base64WithPrefix.split(',')[1];
+            const API_URL = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
+            
+            const requestBody = {
+                requests: [{
+                    image: { content: base64Data },
+                    features: [
+                        { type: 'LABEL_DETECTION', maxResults: 15 },
+                        { type: 'WEB_DETECTION', maxResults: 1 }
+                    ]
+                }]
+            };
+
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error.message || 'Failed to call Google Vision API.');
+            }
+
+            const data = await response.json();
+            
+            // Process the response to build a description string
+            if (!data.responses || !data.responses[0]) {
+                throw new Error('Received an empty response from the API.');
+            }
+            
+            const res = data.responses[0];
+            let descriptionParts = [];
+
+            if (res.webDetection && res.webDetection.webEntities && res.webDetection.webEntities.length > 0) {
+                const webDesc = res.webDetection.webEntities[0].description;
+                if (webDesc) {
+                    descriptionParts.push(`A photo of: ${webDesc}.`);
+                }
+            }
+
+            if (res.labelAnnotations && res.labelAnnotations.length > 0) {
+                const labels = res.labelAnnotations.map(l => l.description).join(', ');
+                descriptionParts.push(`Tags: ${labels}`);
+            }
+
+            if (descriptionParts.length === 0) {
+                return 'No description or labels found.';
+            } else {
+                return descriptionParts.join('\n');
+            }
+        }
+
+        /**
+         * Injects a description string into an image's metadata.
+         * @param {string} originalBase64 - The base64 string of the original image.
+         * @param {string} description - The text to inject.
+         * @returns {string} - The new base64 string with metadata.
+         */
+        function injectMetadata(originalBase64, description) {
+            if (typeof piexif === 'undefined') {
+                throw new Error('piexif.js library not loaded.');
+            }
+
+            const iptcData = {};
+            // Write to the IPTC "Caption/Abstract" field (2:120)
+            iptcData[piexif.IPTC.Caption_Abstract] = description;
+
+            const exifObj = { "IPTC": iptcData };
+            const exifBytes = piexif.dump(exifObj);
+            
+            // Insert new metadata into the original image's base64 string
+            return piexif.insert(exifBytes, originalBase64);
+        }
+
+        // --- Download ZIP Logic ---
+        downloadZipButton.addEventListener('click', async () => {
+            progressText.textContent = 'Generating .zip file... This may take a moment.';
+            
+            try {
+                const content = await zip.generateAsync({ type: "blob" });
+                
+                // Create a download link and click it
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(content);
+                a.download = 'tagged-images.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href); // Free up memory
+
+                progressText.textContent = '.zip file successfully created!';
+
+            } catch (error) {
+                console.error('ZIP generation error:', error);
+                showMessage(`Error creating .zip file: ${error.message}`);
+            }
+        });
+
+        // --- Initial Load ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadApiKey();
+        });
+
+    </script>
+</body>
+</html>
